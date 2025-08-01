@@ -13,34 +13,43 @@ A **Model Context Protocol (MCP) server** for parsing and analyzing PcapNG and P
 
 ## 🚀 Quick Start
 
-### Build & Test
+### Build & Run MCP Server
 ```bash
-# Clone and build
-cargo build
+# Build the server
+cargo build --release
 
+# Start MCP server (connects via stdio)
+cargo run --bin pcapng-mcp-server
+
+# Test the server manually
+echo '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}' | cargo run --bin pcapng-mcp-server
+```
+
+### Test Mode (No MCP Protocol)
+```bash
 # Run comprehensive tests with real PcapNG files
 cargo run --bin test_server
 
-# Start MCP server
-cargo run --bin pcapng-mcp-server
-
-# Test mode (no MCP protocol, just functionality check)
+# Quick functionality test
 cargo run --bin pcapng-mcp-server -- --test
+
+# See full demo
+cargo run --bin final_demo
 ```
 
-### Example Output
+### MCP Client Integration
 ```json
-{
-  "file_path": "/path/to/capture.pcapng",
-  "total_packets": 974,
-  "file_size": 211700,
-  "file_type": "PcapNG",
-  "interfaces": 1,
-  "capture_duration": {
-    "secs": 19,
-    "nanos": 0
-  }
-}
+// Initialize request
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+
+// List available tools
+{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+
+// Call a tool
+{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+  "name": "parse_pcapng_file", 
+  "arguments": {"file_path": "/path/to/file.pcapng"}
+}}
 ```
 
 ## 🛠️ MCP Tools Available

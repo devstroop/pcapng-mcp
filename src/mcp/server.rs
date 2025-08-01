@@ -1,6 +1,7 @@
 use std::path::Path;
+use std::io::{self, BufRead, BufReader, Write};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use rmcp::ErrorData;
 use crate::pcapng::parser::PcapNGParser;
 use crate::utils::errors::PcapNGError;
@@ -75,31 +76,239 @@ impl PcapNGServer {
 
 // Enhanced MCP server startup with proper protocol support
 pub async fn start_mcp_server() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("🚀 Starting PcapNG MCP Server...");
+    let server = PcapNGServer::new();
     
-    let _server = PcapNGServer::new();
+    // Log to stderr so it doesn't interfere with MCP protocol
+    eprintln!("🚀 PcapNG MCP Server starting...");
     
-    // Define available MCP tools
-    let tools = vec![
-        ("parse_pcapng_file", "Parse a PcapNG or PCAP file and return comprehensive information"),
-        ("get_pcapng_metadata", "Get metadata information about a PcapNG or PCAP file"),
-        ("list_pcapng_interfaces", "List all network interfaces found in a PcapNG or PCAP file"),
-        ("filter_pcapng_packets", "Filter packets from a PcapNG file based on criteria"),
-        ("analyze_pcapng_timing", "Analyze timing characteristics of packets in a PcapNG file"),
-    ];
-
-    println!("📋 Available MCP Tools:");
-    for (name, description) in &tools {
-        println!("  • {} - {}", name, description);
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    let reader = BufReader::new(stdin);
+    
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        
+        // Parse JSON-RPC request
+        let request: Value = match serde_json::from_str(&line) {
+            Ok(req) => req,
+            Err(_) => {
+                // Send error response for invalid JSON
+                let error_response = json!({
+                    "jsonrpc": "2.0",
+                    "id": null,
+                    "error": {
+                        "code": -32700,
+                        "message": "Parse error"
+                    }
+                });
+                writeln!(stdout, "{}", error_response)?;
+                stdout.flush()?;
+                continue;
+            }
+        };
+        
+        let response = handle_request(&server, request).await;
+        writeln!(stdout, "{}", response)?;
+        stdout.flush()?;
     }
     
-    println!("✅ PcapNG MCP Server initialized successfully!");
-    println!("💡 Ready to serve MCP requests for PcapNG file analysis");
-    println!("🔌 Server provides {} tools for network packet analysis", tools.len());
-    println!("📁 Supports both PcapNG and classic PCAP file formats");
-    println!("⚡ High-performance async processing with error handling");
-    
     Ok(())
+}
+
+async fn handle_request(server: &PcapNGServer, request: Value) -> Value {
+    let method = request.get("method").and_then(|m| m.as_str()).unwrap_or("");
+    let id = request.get("id").cloned().unwrap_or(Value::Null);
+    
+    match method {
+        "initialize" => {
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "tools": {}
+                    },
+                    "serverInfo": {
+                        "name": "pcapng-mcp-server",
+                        "version": "0.1.0"
+                    }
+                }
+            })
+        },
+        "notifications/initialized" => {
+            // Just acknowledge the notification, no response needed
+            return json!(null);
+        },
+        "tools/list" => {
+            let tools = json!([
+                {
+                    "name": "parse_pcapng_file",
+                    "description": "Parse a PcapNG or PCAP file and return comprehensive information",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {
+                                "type": "string",
+                                "description": "Path to the PcapNG or PCAP file to parse"
+                            }
+                        },
+                        "required": ["file_path"]
+                    }
+                },
+                {
+                    "name": "get_pcapng_metadata",
+                    "description": "Get metadata information about a PcapNG or PCAP file",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {
+                                "type": "string",
+                                "description": "Path to the PcapNG or PCAP file"
+                            }
+                        },
+                        "required": ["file_path"]
+                    }
+                },
+                {
+                    "name": "list_pcapng_interfaces",
+                    "description": "List all network interfaces found in a PcapNG or PCAP file",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {
+                                "type": "string",
+                                "description": "Path to the PcapNG or PCAP file"
+                            }
+                        },
+                        "required": ["file_path"]
+                    }
+                }
+            ]);
+            
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "tools": tools
+                }
+            })
+        },
+        "tools/call" => {
+            let params = request.get("params").cloned().unwrap_or(json!({}));
+            let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
+            
+            let result = match tool_name {
+                "parse_pcapng_file" => {
+                    if let Some(file_path) = arguments.get("file_path").and_then(|f| f.as_str()) {
+                        match server.parse_file(file_path).await {
+                            Ok(content) => json!({
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": content
+                                    }
+                                ]
+                            }),
+                            Err(e) => json!({
+                                "error": {
+                                    "code": -32000,
+                                    "message": format!("Parse error: {}", e)
+                                }
+                            })
+                        }
+                    } else {
+                        json!({
+                            "error": {
+                                "code": -32602,
+                                "message": "Missing required parameter: file_path"
+                            }
+                        })
+                    }
+                },
+                "get_pcapng_metadata" => {
+                    if let Some(file_path) = arguments.get("file_path").and_then(|f| f.as_str()) {
+                        match server.get_metadata(file_path).await {
+                            Ok(content) => json!({
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": content
+                                    }
+                                ]
+                            }),
+                            Err(e) => json!({
+                                "error": {
+                                    "code": -32000,
+                                    "message": format!("Metadata error: {}", e)
+                                }
+                            })
+                        }
+                    } else {
+                        json!({
+                            "error": {
+                                "code": -32602,
+                                "message": "Missing required parameter: file_path"
+                            }
+                        })
+                    }
+                },
+                "list_pcapng_interfaces" => {
+                    if let Some(file_path) = arguments.get("file_path").and_then(|f| f.as_str()) {
+                        match server.list_interfaces(file_path).await {
+                            Ok(content) => json!({
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": content
+                                    }
+                                ]
+                            }),
+                            Err(e) => json!({
+                                "error": {
+                                    "code": -32000,
+                                    "message": format!("Interface listing error: {}", e)
+                                }
+                            })
+                        }
+                    } else {
+                        json!({
+                            "error": {
+                                "code": -32602,
+                                "message": "Missing required parameter: file_path"
+                            }
+                        })
+                    }
+                },
+                _ => json!({
+                    "error": {
+                        "code": -32601,
+                        "message": format!("Unknown tool: {}", tool_name)
+                    }
+                })
+            };
+            
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": result
+            })
+        },
+        _ => {
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": -32601,
+                    "message": format!("Unknown method: {}", method)
+                }
+            })
+        }
+    }
 }
 
 // Tool parameter structures for future use
