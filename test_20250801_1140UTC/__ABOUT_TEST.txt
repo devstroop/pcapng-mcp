@@ -1,0 +1,17 @@
+Test was done at 13:40  01.08.2025  (11:40 UTC in packet logs)
+
+log "CLIENT-iPhone.....txt"
+is debug log from SSTPConnect
+
+file "sniffer_211_cluster.pcapng" is packet sniffer from WireShark - Cluster server 62.24.65.211
+file "sniffer_server_220_member.pcapng" is packet sniffer from WireShark - Server 62.24.65.220
+
+So when client was trying to connect to IP 62.24.65.211, after handshake was transfered to 62.24.65.220 and after connection to that member-server there was successfull connection and then manully (by user) disconnected. Client public IP was 77.48.2.3
+
+Files "sniffer....pcapng" contain all packets; 
+files "sniffer..._exp77.48.2.3.pcapng" then only packets from and to IP 77.48.2.3 (client public)
+
+I do not know how to decode data packets, so probably it will not help you...
+
+After successfull handshake client asks for DHCP (UDP 67 via internal bridge) and obtains 10.21.255.244
+
